@@ -6,6 +6,8 @@ import os
 from datetime import date
 from pathlib import Path
 
+import anthropic
+
 DAILY_DIR = Path(__file__).parent / "daily"
 
 ROLE_OPTIONS = [
@@ -41,8 +43,34 @@ def _ask(prompt: str, default: str = "") -> str:
     return val if val else default
 
 
+def _classify_role(summary: str) -> str:
+    """Anthropic API를 호출하여 장면 요약에서 역할 태그를 자동 분류한다."""
+    role_list = "\n".join(f"- {r}" for r in ROLE_OPTIONS)
+    prompt = (
+        f"이 장면 요약을 보고 역할 태그를 하나만 선택해줘:\n"
+        f"{role_list}\n\n"
+        f"장면 요약: {summary}\n\n"
+        f"답변은 태그 이름만 정확히 하나만 출력해줘."
+    )
+
+    try:
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=32,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        role = message.content[0].text.strip()
+        if role in ROLE_OPTIONS:
+            return role
+        return "미분류"
+    except Exception as e:
+        print(f"  (API 호출 실패: {e} → 미분류로 저장)")
+        return "미분류"
+
+
 def finish() -> None:
-    """장면 마무리: 글자수·체감·한줄요약·장면 역할을 기록한다."""
+    """장면 마무리: 글자수·체감·한줄요약을 입력받고, 장면 역할은 자동 분류한다."""
     print("\n── 장면 마무리 ──\n")
 
     # 1) 글자수
@@ -59,18 +87,10 @@ def finish() -> None:
     # 3) 한줄요약
     summary = _ask("한줄요약? ")
 
-    # 4) 장면 역할
-    print("\n장면 역할? (번호 또는 직접 입력, 엔터 → 미분류)")
-    for i, r in enumerate(ROLE_OPTIONS, 1):
-        print(f"  {i}. {r}")
-    role_input = _ask("> ")
-
-    if role_input == "":
-        role = "미분류"
-    elif role_input.isdigit() and 1 <= int(role_input) <= len(ROLE_OPTIONS):
-        role = ROLE_OPTIONS[int(role_input) - 1]
-    else:
-        role = role_input
+    # 4) 장면 역할 — API 자동 분류
+    print("\n장면 역할 자동 분류 중...")
+    role = _classify_role(summary)
+    print(f"  → [자동: {role}]")
 
     # 레코드 저장
     record = {
@@ -97,7 +117,7 @@ def _print_record(rec: dict) -> None:
     print(f"  글자수   : {rec['word_count']}")
     print(f"  체감     : {rec['effort']}")
     print(f"  한줄요약 : {rec['summary']}")
-    print(f"  장면 역할: {rec['role']}")
+    print(f"  장면 역할: [자동: {rec['role']}]")
 
 
 def show() -> None:
